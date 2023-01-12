@@ -1,3 +1,7 @@
+#!bin/bash
+
+source /data/conda/miniconda3/etc/profile.d/conda.sh
+
 file=$1
 prefix=`basename $1 .fastq.gz`
 mkdir $prefix && cd $prefix
