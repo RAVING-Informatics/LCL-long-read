@@ -13,7 +13,7 @@ echo $prefix
 conda activate long_read
 
 #Align reads to reference genome
-minimap2 -x map-ont -a /data/reference_genome_hg38/Homo_sapiens_assembly38.fasta ../$file > $prefix.sam
+minimap2 -x map-ont -a /data/reference_genome_hg38/Homo_sapiens_assembly38_masked.fasta ../$file > $prefix.sam
 echo "Minimap2 finished"
 
 #Convert to BAM, sort, index
@@ -23,13 +23,27 @@ samtools index ${prefix}_sorted.bam
 echo "samtools finished"
 
 #Call SNPs and small indels using NanoCaller, merge with bcftools and get region of interest
-NanoCaller --bam ${prefix}_sorted.bam --ref /data/reference_genome_hg38/Homo_sapiens_assembly38.fasta --cpu 10 --chrom chr14 --preset ont --phase
+NanoCaller --bam ${prefix}_sorted.bam --ref /data/reference_genome_hg38/Homo_sapiens_assembly38_masked.fasta --cpu 10 --chrom chr14 --preset ont --phase
 bcftools concat variant_calls.indels.vcf.gz variant_calls.snps.phased.vcf.gz -a -r chr14:22412000-24436000 -Oz -o ${prefix}_merged_snps_indels.vcf.gz
 echo "NanoCaller finished"
 
+#Phase sr SNPs and haplotag sr and lr bams
+mkdir -p whatshap && cd whatshap
+whatshap phase --ignore-read-groups -o ${prefix}_phased_sr.vcf --indels --chromosome chr14 --reference=/data/reference_genome_hg38/Homo_sapiens_assembly38_masked.fasta ../*${prefix}*.vcf.fixed.vcf ../*${prefix}*.bam ../*_pass_sorted.bam
+bgzip ${prefix}_phased_sr.vcf
+tabix -p vcf ${prefix}_phased_sr.vcf.gz
+
+whatshap stats --chromosome chr14 --gtf phased.gtf ${prefix}_phased_sr.vcf.gz
+whatshap haplotag -o ${prefix}_haplotagged_sr.bam --ignore-read-groups --skip-missing-contigs --regions chr14:22881947-24904927 --reference /data/reference_genome_hg38/Homo_sapiens_assembly38_masked.fasta ${prefix}_phased_sr.vcf.gz ../*${prefix}*.bam
+whatshap haplotag -o ${prefix}_haplotagged_lr.bam --ignore-read-groups --skip-missing-contigs --regions chr14:22881947-24904927 --reference /data/reference_genome_hg38/Homo_sapiens_assembly38_masked.fasta ${prefix}_phased_sr.vcf.gz ../*_pass_sorted.bam
+
+samtools index ${prefix}_haplotagged_sr.bam
+samtools index ${prefix}_haplotagged_lr.bam
+echo "Phasing finished"
+
 #Annotate resulting VCF file with VEP
 conda activate vep
-vep --cache --dir /data/ensembl-vep/ --fork 10 --af_gnomadg --af_gnomade --max_af --plugin CADD,/data/ensembl-vep/Plugins/gnomad.genomes.r3.0.snv.tsv.gz,/data/ensembl-vep/Plugins/gnomad.genomes.r3.0.indel.tsv.gz --hgvs --hgvsg --fasta /data/reference_genome_hg38/Homo_sapiens_assembly38.fasta --species homo_sapiens --input_file ${prefix}_merged_snps_indels.vcf.gz --vcf --output_file ${prefix}_merged_snps_indels_vep.vcf
+vep --cache --dir /data/ensembl-vep/ --fork 10 --af_gnomadg --af_gnomade --max_af --plugin CADD,/data/ensembl-vep/Plugins/gnomad.genomes.r3.0.snv.tsv.gz,/data/ensembl-vep/Plugins/gnomad.genomes.r3.0.indel.tsv.gz --hgvs --hgvsg --fasta /data/reference_genome_hg38/Homo_sapiens_assembly38.fasta --species homo_sapiens --input_file ${prefix}_merged_snps_indels.vcf.gz --vcf --output_file ${prefix}_phased_sr.vcf.gz
 echo "VEP finished"
 
 #Convert VEP output to something more readable
